@@ -18,7 +18,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QPoint, QRect, QSettings, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -26,6 +26,7 @@ from PySide6.QtGui import (
     QFont,
     QKeySequence,
     QPainter,
+    QShortcut,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
@@ -49,6 +50,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -62,6 +64,10 @@ from PySide6.QtWidgets import (
 
 from export_parallel import export_file
 from text_corrector import normalize_text
+
+HISTORY_LIMIT = 20
+_HISTORY_KEY_FIND = "find_replace/history_find"
+_HISTORY_KEY_REPL = "find_replace/history_replace"
 
 
 class NumberBar(QWidget):
@@ -572,6 +578,10 @@ class CodeEditor(QPlainTextEdit):
 class FindReplaceDialog(QDialog):
     """Поиск и замена: regex, учёт регистра, сторона (лево/право/оба)."""
 
+    HISTORY_LIMIT = 20
+    _HISTORY_KEY_FIND = "find_replace/history_find"
+    _HISTORY_KEY_REPL = "find_replace/history_replace"
+
     def __init__(self, parent: "ParallelEditor"):
         super().__init__(parent)
         self.main = parent
@@ -583,15 +593,15 @@ class FindReplaceDialog(QDialog):
         layout = QVBoxLayout(self)
 
         form = QFormLayout()
-        self.find_edit = QLineEdit()
-        self.find_edit.setPlaceholderText("Что искать…")
-        self.find_edit.returnPressed.connect(self.find_next)
+        self.find_edit = self._setup_combo("Что искать…")
+        self.find_edit.lineEdit().returnPressed.connect(self.find_next)
+        self.find_edit.lineEdit().setPlaceholderText("Что искать…")
         form.addRow("Найти:", self.find_edit)
 
         self.replace_label = QLabel("Заменить на:")
-        self.replace_edit = QLineEdit()
-        self.replace_edit.setPlaceholderText("На что заменить…")
-        self.replace_edit.returnPressed.connect(self.replace_one)
+        self.replace_edit = self._setup_combo("На что заменить…")
+        self.replace_edit.lineEdit().returnPressed.connect(self.replace_one)
+        self.replace_edit.lineEdit().setPlaceholderText("На что заменить…")
         form.addRow(self.replace_label, self.replace_edit)
         layout.addLayout(form)
 
@@ -642,6 +652,78 @@ class FindReplaceDialog(QDialog):
         layout.addWidget(close_box)
 
         self.find_edit.setFocus()
+        self._load_history()
+        self.find_edit.setFocus()
+
+    def _setup_combo(self, placeholder: str) -> QComboBox:
+        cb = QComboBox()
+        cb.setEditable(True)
+        cb.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        cb.setMaxVisibleItems(12)
+        cb.lineEdit().setPlaceholderText(placeholder)
+        cb.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        cb.setMinimumContentsLength(24)
+        # контекстное меню: очистить историю
+        cb.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        cb.customContextMenuRequested.connect(
+            lambda pos, c=cb: self._history_context_menu(c, pos)
+        )
+        return cb
+
+    def _history_context_menu(self, combo: QComboBox, pos) -> None:
+        menu = QMenu(self)
+        act_clear = menu.addAction("Очистить историю")
+        act_clear.setEnabled(combo.count() > 0)
+        chosen = menu.exec(combo.mapToGlobal(pos))
+        if chosen is act_clear:
+            combo.clear()
+            self._save_history()
+
+    def _combo_text(self, combo: QComboBox) -> str:
+        return combo.currentText()
+
+    def _remember(self, combo: QComboBox, value: str) -> None:
+        """Добавить value в начало истории combo (без дублей)."""
+        if not value:
+            return
+        # убрать существующее вхождение
+        for i in range(combo.count() - 1, -1, -1):
+            if combo.itemText(i) == value:
+                combo.removeItem(i)
+        combo.insertItem(0, value)
+        # ограничить длину
+        while combo.count() > HISTORY_LIMIT:
+            combo.removeItem(combo.count() - 1)
+        combo.setCurrentIndex(0)
+        self._save_history()
+
+    def _load_history(self) -> None:
+        s = QSettings()
+        for combo, key in (
+            (self.find_edit, _HISTORY_KEY_FIND),
+            (self.replace_edit, _HISTORY_KEY_REPL),
+        ):
+            items = s.value(key, [], type=list) or []
+            combo.blockSignals(True)
+            combo.clear()
+            for it in items[:HISTORY_LIMIT]:
+                combo.addItem(str(it))
+            combo.setCurrentIndex(-1)
+            combo.setEditText("")
+            combo.blockSignals(False)
+
+    def _save_history(self) -> None:
+        s = QSettings()
+        s.setValue(
+            _HISTORY_KEY_FIND,
+            [self.find_edit.itemText(i) for i in range(self.find_edit.count())],
+        )
+        s.setValue(
+            _HISTORY_KEY_REPL,
+            [self.replace_edit.itemText(i) for i in range(self.replace_edit.count())],
+        )
 
     def set_replace_mode(self, enabled: bool) -> None:
         """True — полный диалог замены; False — только поиск."""
@@ -655,7 +737,7 @@ class FindReplaceDialog(QDialog):
         self.adjustSize()
 
     def _pattern(self):
-        raw = self.find_edit.text()
+        raw = self._combo_text(self.find_edit)
         if not raw:
             self.status.setText("Введите строку поиска")
             self.status.setStyleSheet("color: #c5221f;")
@@ -766,6 +848,7 @@ class FindReplaceDialog(QDialog):
                     m = matches[-1]  # wrap
 
             if m is not None:
+                self._remember(self.find_edit, self._combo_text(self.find_edit))
                 self._select_match(editor, m.start(), m.end())
                 self._last_editor = editor
                 self._highlight_all_in_editors(
@@ -816,6 +899,7 @@ class FindReplaceDialog(QDialog):
                 self.status.setStyleSheet("color: #c5221f;")
                 return
             cursor.insertText(new)
+            self._remember(self.find_edit, self._combo_text(self.find_edit))
             self.status.setText("Заменено 1")
             self.status.setStyleSheet("color: #188038;")
             self.find_next()
@@ -848,6 +932,7 @@ class FindReplaceDialog(QDialog):
                 editor._syncing = False
                 total += n
         if total:
+            self._remember(self.find_edit, self._combo_text(self.find_edit))
             self.status.setText(f"Заменено: {total}")
             self.status.setStyleSheet("color: #188038;")
             # обновить подсветку оставшихся вхождений
@@ -1193,6 +1278,16 @@ class MetadataDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def keyPressEvent(self, event):
+        """Обработка Ctrl+S для сохранения."""
+        if (
+            event.modifiers() == Qt.KeyboardModifier.ControlModifier
+            and event.key() == Qt.Key.Key_S
+        ):
+            self.accept()  # эквивалентно нажатию кнопки Save
+            return
+        super().keyPressEvent(event)
+
     def _add_tag_chip(self, tag: str, selected: bool) -> None:
         """Добавить чип тега в FlowLayout."""
         if tag in self._tag_chips:
@@ -1451,7 +1546,7 @@ class ParallelEditor(QMainWindow):
 
         dlg.set_replace_mode(replace_mode)
         dlg.find_edit.setFocus()
-        dlg.find_edit.selectAll()
+        #dlg.find_edit.selectAll()
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()
