@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Проверка соответствия структуры между оригиналом и переводом.
+Фоновая проверка в отдельном потоке.
 """
 
 from __future__ import annotations
@@ -9,6 +10,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Iterator
+
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 
 class ProblemType(Enum):
@@ -22,10 +25,10 @@ class ProblemType(Enum):
 class Paragraph:
     """Абзац Markdown."""
     text: str
-    start_pos: int  # позиция в тексте
-    end_pos: int  # позиция конца
-    line_start: int  # номер начальной строки (0-based)
-    line_end: int  # номер конечной строки (exclusive)
+    start_pos: int
+    end_pos: int
+    line_start: int
+    line_end: int
     is_heading: bool = False
     is_list_item: bool = False
     is_code_block: bool = False
@@ -35,18 +38,17 @@ class Paragraph:
 @dataclass
 class StructureProblem:
     """Проблема структуры."""
-    en_para_idx: int | None  # индекс абзаца в оригинале (None если проблема только в переводе)
-    ru_para_idx: int | None  # индекс абзаца в переводе
+    en_para_idx: int | None
+    ru_para_idx: int | None
     problem_type: ProblemType
     message: str
-    en_pos: int | None = None  # позиция для перехода
+    en_pos: int | None = None
     ru_pos: int | None = None
 
 
 class MarkdownParagraphParser:
     """Парсер Markdown-абзацев."""
 
-    # Паттерны для определения типов блоков
     _HEADING_RE = re.compile(r"^#{1,6}\s+.+$")
     _LIST_ITEM_RE = re.compile(r"^(\s*[-*+]|\s*\d+\.)\s+.+$")
     _CODE_BLOCK_RE = re.compile(r"^```")
@@ -87,12 +89,10 @@ class MarkdownParagraphParser:
             current_para_lines = []
 
         for line_idx, line in enumerate(lines):
-            line_len = len(line) + 1  # +1 для \n
+            line_len = len(line) + 1
 
-            # Проверка code block
             if self._CODE_BLOCK_RE.match(line):
                 if in_code_block:
-                    # Конец code block
                     current_para_lines.append(line)
                     pos += line_len
                     flush_paragraph()
@@ -101,7 +101,6 @@ class MarkdownParagraphParser:
                     current_line_start = line_idx + 1
                     continue
                 else:
-                    # Начало code block
                     if current_para_lines:
                         flush_paragraph()
                     in_code_block = True
@@ -112,12 +111,10 @@ class MarkdownParagraphParser:
                     continue
 
             if in_code_block:
-                # Внутри code block — всё один абзац
                 current_para_lines.append(line)
                 pos += line_len
                 continue
 
-            # Пустая строка — разделитель абзацев
             if self._EMPTY_LINE_RE.match(line):
                 if current_para_lines:
                     flush_paragraph()
@@ -126,7 +123,6 @@ class MarkdownParagraphParser:
                 pos += line_len
                 continue
 
-            # Заголовок — всегда отдельный абзац
             if self._HEADING_RE.match(line):
                 if current_para_lines:
                     flush_paragraph()
@@ -139,23 +135,20 @@ class MarkdownParagraphParser:
                 current_line_start = line_idx + 1
                 continue
 
-            # Обычная строка — добавляем к текущему абзацу
             if not current_para_lines:
                 current_start_pos = pos
                 current_line_start = line_idx
             current_para_lines.append(line)
             pos += line_len
 
-        # Финальный абзац
         flush_paragraph()
-
         return paragraphs
 
 
 class StructureChecker:
-    """Проверка соответствия структуры между оригиналом и переводом."""
+    """Проверка соответствия структуры."""
 
-    LENGTH_THRESHOLD = 0.3  # 30% расхождение по длине
+    LENGTH_THRESHOLD = 0.3
 
     def __init__(self):
         self.parser = MarkdownParagraphParser()
@@ -165,13 +158,11 @@ class StructureChecker:
         en_paras = self.parser.parse(en_text)
         ru_paras = self.parser.parse(ru_text)
 
-        # Фильтруем пустые абзацы для сравнения
         en_non_empty = [p for p in en_paras if not p.is_empty]
         ru_non_empty = [p for p in ru_paras if not p.is_empty]
 
         problems: list[StructureProblem] = []
 
-        # Проверяем количество абзацев
         if len(en_non_empty) != len(ru_non_empty):
             problems.append(
                 StructureProblem(
@@ -184,13 +175,11 @@ class StructureChecker:
                 )
             )
 
-        # Сравниваем по индексу
         max_len = max(len(en_non_empty), len(ru_non_empty))
         for idx in range(max_len):
             en_para = en_non_empty[idx] if idx < len(en_non_empty) else None
             ru_para = ru_non_empty[idx] if idx < len(ru_non_empty) else None
 
-            # Пустой перевод при непустом оригинале
             if en_para and not en_para.is_empty:
                 if ru_para is None or ru_para.is_empty:
                     problems.append(
@@ -205,7 +194,6 @@ class StructureChecker:
                     )
                     continue
 
-            # Пустой оригинал при непустом переводе (редко, но бывает)
             if ru_para and not ru_para.is_empty:
                 if en_para is None or en_para.is_empty:
                     problems.append(
@@ -220,7 +208,6 @@ class StructureChecker:
                     )
                     continue
 
-            # Оба непустые — проверяем длину
             if en_para and ru_para and not en_para.is_empty and not ru_para.is_empty:
                 en_len = len(en_para.text)
                 ru_len = len(ru_para.text)
@@ -241,35 +228,54 @@ class StructureChecker:
         return problems
 
 
-# Пример использования
-if __name__ == "__main__":
-    en_text = """# Глава 1
+class StructureCheckWorker(QObject):
+    """Воркер для фоновой проверки структуры."""
 
-Это первый абзац оригинала.
+    finished = Signal(list)  # list[StructureProblem]
+    started = Signal()
 
-Это второй абзац оригинала. Он довольно длинный, чтобы проверить расхождение по длине.
+    def __init__(self, checker: StructureChecker):
+        super().__init__()
+        self.checker = checker
+        self._en_text = ""
+        self._ru_text = ""
+        self._cancelled = False
 
-# Глава 2
+    def set_texts(self, en_text: str, ru_text: str) -> None:
+        """Установить тексты для проверки."""
+        self._en_text = en_text
+        self._ru_text = ru_text
+        self._cancelled = False
 
-Третий абзац.
-"""
+    def cancel(self) -> None:
+        """Отменить текущую проверку."""
+        self._cancelled = True
 
-    ru_text = """# Глава 1
+    def run(self) -> None:
+        """Выполнить проверку."""
+        self.started.emit()
+        if self._cancelled:
+            return
+        problems = self.checker.check(self._en_text, self._ru_text)
+        if not self._cancelled:
+            self.finished.emit(problems)
 
-Это первый абзац перевода.
 
-# Глава 2
+class StructureCheckThread(QThread):
+    """Поток для фоновой проверки структуры."""
 
-Третий абзац перевода. Он очень короткий.
-"""
+    def __init__(self, checker: StructureChecker, parent=None):
+        super().__init__(parent)
+        self.worker = StructureCheckWorker(checker)
+        self.worker.moveToThread(self)
+        self.started.connect(self.worker.run)
 
-    checker = StructureChecker()
-    problems = checker.check(en_text, ru_text)
+    def check(self, en_text: str, ru_text: str) -> None:
+        """Запустить проверку."""
+        self.worker.cancel()
+        self.worker.set_texts(en_text, ru_text)
+        self.start()
 
-    for p in problems:
-        icon = {
-            ProblemType.EMPTY_TRANSLATION: "🟡",
-            ProblemType.STRUCTURE_MISMATCH: "🔴",
-            ProblemType.LENGTH_DIVERGENCE: "⚠️",
-        }[p.problem_type]
-        print(f"{icon} {p.message}")
+    def cancel(self) -> None:
+        """Отменить текущую проверку."""
+        self.worker.cancel()

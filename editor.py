@@ -18,7 +18,18 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRect, QSettings, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import (
+    QObject,
+    QPoint,
+    QRect,
+    QSettings,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -62,7 +73,7 @@ from PySide6.QtWidgets import (
 )
 
 from export_parallel import export_file
-from structure_checker import StructureChecker, StructureProblem
+from structure_checker import StructureChecker, StructureCheckThread, StructureProblem
 from structure_panel import StructurePanel
 from text_corrector import normalize_text
 
@@ -1486,33 +1497,41 @@ class ParallelEditor(QMainWindow):
         self.setStatusBar(QStatusBar())
         self._create_menu()
 
+        # Инициализация проверки структуры
         self.structure_checker = StructureChecker()
+        self.structure_thread = StructureCheckThread(self.structure_checker)
+        self.structure_thread.worker.finished.connect(self._on_structure_check_finished)
+        self.structure_thread.worker.started.connect(self._on_structure_check_started)
+
+        # Debounce таймер — не запускать проверку чаще, чем раз в 1000мс
+        self._structure_check_timer = QTimer()
+        self._structure_check_timer.setSingleShot(True)
+        self._structure_check_timer.setInterval(1000)
+        self._structure_check_timer.timeout.connect(self._run_structure_check)
+
+        # Панель результатов
         self.structure_panel = StructurePanel()
         self.structure_panel.setMaximumHeight(150)
         self.structure_panel.problem_activated.connect(self._on_structure_problem)
 
-        # В layout добавить панель снизу:
+        # Индикатор загрузки
+        self.structure_status = QLabel("✓ Структура проверена")
+        self.structure_status.setStyleSheet("color: #188038; padding: 4px;")
+
+       # Подключение к изменению текста
+        self.left_editor.textChanged.connect(self._schedule_structure_check)
+        self.right_editor.textChanged.connect(self._schedule_structure_check)
+
         structure_box = QGroupBox("Проверка структуры")
         structure_layout = QVBoxLayout(structure_box)
         structure_layout.addWidget(self.structure_panel)
         root.addWidget(structure_box)
-
-        # Подключить к изменению текста:
-        self.left_editor.textChanged.connect(self._check_structure)
-        self.right_editor.textChanged.connect(self._check_structure)
 
         # Применяем сохранённую тему
         saved_theme = QSettings().value("ui/theme", "light")
         self.apply_theme(saved_theme)
 
         self.statusBar().showMessage("Клик по строке — подсветка пары и выравнивание")
-
-    def _check_structure(self) -> None:
-        """Проверить структуру при изменении текста."""
-        en_text = self.left_editor.toPlainText()
-        ru_text = self.right_editor.toPlainText()
-        problems = self.structure_checker.check(en_text, ru_text)
-        self.structure_panel.update_problems(problems)
 
     def _on_structure_problem(self, problem: StructureProblem) -> None:
         """Перейти к проблемному абзацу."""
@@ -1527,6 +1546,31 @@ class ParallelEditor(QMainWindow):
             cursor.setPosition(problem.ru_pos)
             self.right_editor.setTextCursor(cursor)
             self.right_editor.centerCursor()
+
+    def _schedule_structure_check(self) -> None:
+        """Запланировать проверку структуры с debounce."""
+        self._structure_check_timer.start()
+
+    def _run_structure_check(self) -> None:
+        """Запустить проверку структуры в фоне."""
+        en_text = self.left_editor.toPlainText()
+        ru_text = self.right_editor.toPlainText()
+        self.structure_thread.check(en_text, ru_text)
+
+    def _on_structure_check_started(self) -> None:
+        """Показать индикатор загрузки."""
+        self.structure_status.setText("⏳ Проверка структуры...")
+        self.structure_status.setStyleSheet("color: #1a73e8; padding: 4px;")
+
+    def _on_structure_check_finished(self, problems: list) -> None:
+        """Обновить панель результатов."""
+        self.structure_panel.update_problems(problems)
+        if problems:
+            self.structure_status.setText(f"⚠️ Найдено проблем: {len(problems)}")
+            self.structure_status.setStyleSheet("color: #f9ab00; padding: 4px;")
+        else:
+            self.structure_status.setText("✓ Структура совпадает")
+            self.structure_status.setStyleSheet("color: #188038; padding: 4px;")
 
     def apply_theme(self, theme: str) -> None:
         """Применяет светлую или тёмную тему ко всему приложению."""
