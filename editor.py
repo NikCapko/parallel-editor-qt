@@ -1467,14 +1467,32 @@ class ParallelEditor(QMainWindow):
         editors_row.setSpacing(2)
 
         self.left_outline = HeadingOutline("left")
+        self.left_collapsible = CollapsibleWidget(
+            "Оглавление",
+            settings_key="left_outline",
+            orientation="vertical",
+        )
+        self.left_collapsible.add_widget(self.left_outline)
+        # Фиксируем ширину контейнера — как у самого Outline
+        self.left_collapsible.setMinimumWidth(0)
+        self.left_collapsible.setMaximumWidth(200)
+
         self.left_editor = CodeEditor(0)
         self.right_editor = CodeEditor(1)
         self.right_outline = HeadingOutline("right")
+        self.right_collapsible = CollapsibleWidget(
+            "Оглавление",
+            settings_key="right_outline",
+            orientation="vertical",
+        )
+        self.right_collapsible.add_widget(self.right_outline)
+        self.right_collapsible.setMinimumWidth(0)
+        self.right_collapsible.setMaximumWidth(200)
 
-        editors_row.addWidget(self.left_outline, 0)
+        editors_row.addWidget(self.left_collapsible, 0)
         editors_row.addWidget(self.left_editor, 1)
         editors_row.addWidget(self.right_editor, 1)
-        editors_row.addWidget(self.right_outline, 0)
+        editors_row.addWidget(self.right_collapsible, 0)
         root.addLayout(editors_row, 1)
 
         self.editors = [self.left_editor, self.right_editor]
@@ -1512,7 +1530,10 @@ class ParallelEditor(QMainWindow):
 
         # Сворачиваемая панель проверки структуры
         self.structure_collapsible = CollapsibleWidget(
-            "Проверка структуры", settings_key="structure_check", parent=self
+            "Проверка структуры",
+            settings_key="structure_check",
+            orientation="horizontal",
+            parent=self,
         )
 
         # Панель результатов
@@ -1629,10 +1650,14 @@ class ParallelEditor(QMainWindow):
             app.setStyleSheet("")
 
         # Обновляем кастомные виджеты
+        self.left_collapsible.set_theme(theme)
         self.left_editor.set_theme(theme)
         self.left_outline.set_theme(theme)
+
+        self.right_collapsible.set_theme(theme)
         self.right_editor.set_theme(theme)
         self.right_outline.set_theme(theme)
+
         self.structure_collapsible.set_theme(theme)
 
         # Сохраняем выбор
