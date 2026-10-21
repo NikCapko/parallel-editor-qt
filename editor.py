@@ -62,6 +62,8 @@ from PySide6.QtWidgets import (
 )
 
 from export_parallel import export_file
+from structure_checker import StructureChecker, StructureProblem
+from structure_panel import StructurePanel
 from text_corrector import normalize_text
 
 
@@ -1484,11 +1486,47 @@ class ParallelEditor(QMainWindow):
         self.setStatusBar(QStatusBar())
         self._create_menu()
 
+        self.structure_checker = StructureChecker()
+        self.structure_panel = StructurePanel()
+        self.structure_panel.setMaximumHeight(150)
+        self.structure_panel.problem_activated.connect(self._on_structure_problem)
+
+        # В layout добавить панель снизу:
+        structure_box = QGroupBox("Проверка структуры")
+        structure_layout = QVBoxLayout(structure_box)
+        structure_layout.addWidget(self.structure_panel)
+        root.addWidget(structure_box)
+
+        # Подключить к изменению текста:
+        self.left_editor.textChanged.connect(self._check_structure)
+        self.right_editor.textChanged.connect(self._check_structure)
+
         # Применяем сохранённую тему
         saved_theme = QSettings().value("ui/theme", "light")
         self.apply_theme(saved_theme)
 
         self.statusBar().showMessage("Клик по строке — подсветка пары и выравнивание")
+
+    def _check_structure(self) -> None:
+        """Проверить структуру при изменении текста."""
+        en_text = self.left_editor.toPlainText()
+        ru_text = self.right_editor.toPlainText()
+        problems = self.structure_checker.check(en_text, ru_text)
+        self.structure_panel.update_problems(problems)
+
+    def _on_structure_problem(self, problem: StructureProblem) -> None:
+        """Перейти к проблемному абзацу."""
+        if problem.en_pos is not None:
+            cursor = self.left_editor.textCursor()
+            cursor.setPosition(problem.en_pos)
+            self.left_editor.setTextCursor(cursor)
+            self.left_editor.centerCursor()
+
+        if problem.ru_pos is not None:
+            cursor = self.right_editor.textCursor()
+            cursor.setPosition(problem.ru_pos)
+            self.right_editor.setTextCursor(cursor)
+            self.right_editor.centerCursor()
 
     def apply_theme(self, theme: str) -> None:
         """Применяет светлую или тёмную тему ко всему приложению."""
