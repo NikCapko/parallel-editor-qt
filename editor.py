@@ -26,7 +26,7 @@ from PySide6.QtGui import (
     QFont,
     QKeySequence,
     QPainter,
-    QShortcut,
+    QPalette,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
@@ -34,14 +34,12 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -64,10 +62,6 @@ from PySide6.QtWidgets import (
 
 from export_parallel import export_file
 from text_corrector import normalize_text
-
-HISTORY_LIMIT = 20
-_HISTORY_KEY_FIND = "find_replace/history_find"
-_HISTORY_KEY_REPL = "find_replace/history_replace"
 
 
 class NumberBar(QWidget):
@@ -494,16 +488,17 @@ class CodeEditor(QPlainTextEdit):
         self.setExtraSelections([])
         self.viewport().update()
 
-    def highlight_search_matches(
-        self,
-        ranges: list,
-        current: tuple | None = None,
-    ) -> None:
-        """Подсветка всех вхождений поиска.
+    def highlight_search_matches(self, ranges, current=None, select_all=False):
+        """Подсветка вхождений поиска.
 
         ranges — список (start, end);
-        current — текущее совпадение (другой цвет).
+        current — текущее совпадение;
+        select_all — рисовать все совпадения жёлтым.
         """
+        if not select_all:
+            self.setExtraSelections([])
+            return
+
         all_fmt = QTextCharFormat()
         all_fmt.setBackground(QColor("#fff59d"))  # светло-жёлтый — все совпадения
 
@@ -511,19 +506,14 @@ class CodeEditor(QPlainTextEdit):
         cur_fmt.setBackground(QColor("#ff9800"))  # оранжевый — текущее
         cur_fmt.setForeground(QColor("#000000"))
 
-        extras = []
-        cur_set = set()
-        if current is not None:
-            cur_set.add((current[0], current[1]))
+        cur_span = (current[0], current[1]) if current is not None else None
 
+        extras = []
         for start, end in ranges:
             if start >= end:
                 continue
             sel = QTextEdit.ExtraSelection()
-            if (start, end) in cur_set:
-                sel.format = cur_fmt
-            else:
-                sel.format = all_fmt
+            sel.format = cur_fmt if cur_span == (start, end) else all_fmt
             cursor = self.textCursor()
             cursor.setPosition(start)
             cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
@@ -612,8 +602,13 @@ class FindReplaceDialog(QDialog):
         self.regex_cb.setToolTip(
             "Синтаксис Python re; в замене доступны \\1, \\g<name>"
         )
+        self.select_all_cb = QCheckBox("Выделить все")
+        self.select_all_cb.setToolTip(
+            "Выделять все найденные совпадения цветом системного выделения"
+        )
         opts.addWidget(self.case_cb)
         opts.addWidget(self.regex_cb)
+        opts.addWidget(self.select_all_cb)
         opts.addStretch()
         layout.addLayout(opts)
 
@@ -655,6 +650,28 @@ class FindReplaceDialog(QDialog):
         self._load_history()
         self.find_edit.setFocus()
 
+    def _on_select_all_toggled(self, checked: bool) -> None:
+        """Перерисовать подсветку при переключении чекбокса."""
+        pat = self._pattern()
+        if pat is None:
+            # нет валидного паттерна — просто снять подсветку
+            for ed in (self.main.left_editor, self.main.right_editor):
+                ed.clear_search_highlight()
+            return
+        # текущий span — тот, что сейчас выделен курсором (если есть)
+        cur_editor, cur_span = self._current_cursor_span()
+        self._highlight_all_in_editors(
+            pat, current_editor=cur_editor, current_span=cur_span
+        )
+
+    def _current_cursor_span(self):
+        """Вернуть (editor, (start, end)) активного редактора, если в нём есть выделение."""
+        for ed in (self.main.left_editor, self.main.right_editor):
+            cur = ed.textCursor()
+            if cur.hasSelection():
+                return ed, (cur.selectionStart(), cur.selectionEnd())
+        return None, None
+
     def _setup_combo(self, placeholder: str) -> QComboBox:
         cb = QComboBox()
         cb.setEditable(True)
@@ -694,7 +711,7 @@ class FindReplaceDialog(QDialog):
                 combo.removeItem(i)
         combo.insertItem(0, value)
         # ограничить длину
-        while combo.count() > HISTORY_LIMIT:
+        while combo.count() > self.HISTORY_LIMIT:
             combo.removeItem(combo.count() - 1)
         combo.setCurrentIndex(0)
         self._save_history()
@@ -702,13 +719,13 @@ class FindReplaceDialog(QDialog):
     def _load_history(self) -> None:
         s = QSettings()
         for combo, key in (
-            (self.find_edit, _HISTORY_KEY_FIND),
-            (self.replace_edit, _HISTORY_KEY_REPL),
+            (self.find_edit, self._HISTORY_KEY_FIND),
+            (self.replace_edit, self._HISTORY_KEY_REPL),
         ):
             items = s.value(key, [], type=list) or []
             combo.blockSignals(True)
             combo.clear()
-            for it in items[:HISTORY_LIMIT]:
+            for it in items[: self.HISTORY_LIMIT]:
                 combo.addItem(str(it))
             combo.setCurrentIndex(-1)
             combo.setEditText("")
@@ -717,11 +734,11 @@ class FindReplaceDialog(QDialog):
     def _save_history(self) -> None:
         s = QSettings()
         s.setValue(
-            _HISTORY_KEY_FIND,
+            self._HISTORY_KEY_FIND,
             [self.find_edit.itemText(i) for i in range(self.find_edit.count())],
         )
         s.setValue(
-            _HISTORY_KEY_REPL,
+            self._HISTORY_KEY_REPL,
             [self.replace_edit.itemText(i) for i in range(self.replace_edit.count())],
         )
 
@@ -788,11 +805,13 @@ class FindReplaceDialog(QDialog):
         """Подсветить все совпадения во всех целевых редакторах."""
         if pat is None:
             return
+        select_all = self.select_all_cb.isChecked()
         for editor in self._editors():
             text = editor.toPlainText()
             ranges = [(m.start(), m.end()) for m in pat.finditer(text)]
             cur = current_span if editor is current_editor else None
-            editor.highlight_search_matches(ranges, current=cur)
+            # пробрасываем флаг в редактор — он сам решит, каким цветом рисовать
+            editor.highlight_search_matches(ranges, current=cur, select_all=select_all)
 
     def _clear_all_search_highlights(self) -> None:
         for ed in (self.main.left_editor, self.main.right_editor):
@@ -1546,7 +1565,7 @@ class ParallelEditor(QMainWindow):
 
         dlg.set_replace_mode(replace_mode)
         dlg.find_edit.setFocus()
-        #dlg.find_edit.selectAll()
+        # dlg.find_edit.selectAll()
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()
@@ -2030,6 +2049,8 @@ class ParallelEditor(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setOrganizationName("Paralline")
+    app.setApplicationName("Paralline")
     window = ParallelEditor()
     window.show()
 
