@@ -72,6 +72,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from collapsible_widget import CollapsibleWidget
 from export_parallel import export_file
 from structure_checker import StructureChecker, StructureCheckThread, StructureProblem
 from structure_panel import StructurePanel
@@ -1509,6 +1510,11 @@ class ParallelEditor(QMainWindow):
         self._structure_check_timer.setInterval(1000)
         self._structure_check_timer.timeout.connect(self._run_structure_check)
 
+        # Сворачиваемая панель проверки структуры
+        self.structure_collapsible = CollapsibleWidget(
+            "Проверка структуры", settings_key="structure_check", parent=self
+        )
+
         # Панель результатов
         self.structure_panel = StructurePanel()
         self.structure_panel.setMaximumHeight(150)
@@ -1518,14 +1524,15 @@ class ParallelEditor(QMainWindow):
         self.structure_status = QLabel("✓ Структура проверена")
         self.structure_status.setStyleSheet("color: #188038; padding: 4px;")
 
-       # Подключение к изменению текста
+        # Подключение к изменению текста
         self.left_editor.textChanged.connect(self._schedule_structure_check)
         self.right_editor.textChanged.connect(self._schedule_structure_check)
 
         structure_box = QGroupBox("Проверка структуры")
         structure_layout = QVBoxLayout(structure_box)
         structure_layout.addWidget(self.structure_panel)
-        root.addWidget(structure_box)
+        self.structure_collapsible.add_widget(structure_box)
+        root.addWidget(self.structure_collapsible)
 
         # Применяем сохранённую тему
         saved_theme = QSettings().value("ui/theme", "light")
@@ -1563,14 +1570,13 @@ class ParallelEditor(QMainWindow):
         self.structure_status.setStyleSheet("color: #1a73e8; padding: 4px;")
 
     def _on_structure_check_finished(self, problems: list) -> None:
-        """Обновить панель результатов."""
         self.structure_panel.update_problems(problems)
         if problems:
-            self.structure_status.setText(f"⚠️ Найдено проблем: {len(problems)}")
-            self.structure_status.setStyleSheet("color: #f9ab00; padding: 4px;")
+            self.structure_collapsible.set_status(
+                f"⚠️ {len(problems)} проблем", "#f9ab00"
+            )
         else:
-            self.structure_status.setText("✓ Структура совпадает")
-            self.structure_status.setStyleSheet("color: #188038; padding: 4px;")
+            self.structure_collapsible.set_status("✓ OK", "#188038")
 
     def apply_theme(self, theme: str) -> None:
         """Применяет светлую или тёмную тему ко всему приложению."""
@@ -1627,6 +1633,7 @@ class ParallelEditor(QMainWindow):
         self.left_outline.set_theme(theme)
         self.right_editor.set_theme(theme)
         self.right_outline.set_theme(theme)
+        self.structure_collapsible.set_theme(theme)
 
         # Сохраняем выбор
         QSettings().setValue("ui/theme", theme)
