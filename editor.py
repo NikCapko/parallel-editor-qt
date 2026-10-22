@@ -43,6 +43,7 @@ from PySide6.QtGui import (
     QTextFormat,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -370,7 +371,23 @@ class HeadingOutline(QListWidget):
             self.setCurrentRow(active)
             item = self.item(active)
             if item is not None:
-                self.scrollToItem(item)
+                # Проверить, виден ли элемент в viewport
+                index = self.indexFromItem(item)
+                item_rect = self.visualRect(index)
+                viewport_rect = self.viewport().rect()
+
+                # Элемент виден, если его верх и низ в пределах viewport
+                is_visible = (
+                    item_rect.top() >= viewport_rect.top()
+                    and item_rect.bottom() <= viewport_rect.bottom()
+                )
+
+                if not is_visible:
+                    # Центрировать элемент в viewport
+                    self.scrollToItem(
+                        item, QAbstractItemView.ScrollHint.PositionAtCenter
+                    )
+
         self._updating = False
 
     def _on_item_clicked(self, item: QListWidgetItem) -> None:
