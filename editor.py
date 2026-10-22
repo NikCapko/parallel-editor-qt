@@ -19,13 +19,11 @@ import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QObject,
     QPoint,
     QRect,
     QSettings,
     QSize,
     Qt,
-    QThread,
     QTimer,
     QUrl,
     Signal,
@@ -394,6 +392,11 @@ class CodeEditor(QPlainTextEdit):
         self._syncing = False
         self._mouse_click = False
 
+        # Цвета подсветки поиска (зависят от темы)
+        self._search_all_color = QColor("#fff59d")
+        self._search_current_bg = QColor("#ff9800")
+        self._search_current_fg = QColor("#000000")
+
         self.number_bar = NumberBar(self)
         self.highlighter = MarkdownHighlighter(self)
 
@@ -409,6 +412,16 @@ class CodeEditor(QPlainTextEdit):
     def set_theme(self, theme: str) -> None:
         self.number_bar.set_theme(theme)
         self.highlighter.set_theme(theme)
+
+        # Цвета подсветки поиска для разных тем
+        if theme == "dark":
+            self._search_all_color = QColor("#554b00")  # тёмно-жёлтый
+            self._search_current_bg = QColor("#d97706")  # оранжевый
+            self._search_current_fg = QColor("#ffffff")  # белый текст
+        else:
+            self._search_all_color = QColor("#fff59d")  # светло-жёлтый
+            self._search_current_bg = QColor("#ff9800")  # оранжевый
+            self._search_current_fg = QColor("#000000")  # чёрный текст
 
     def mousePressEvent(self, event):
         self._mouse_click = True
@@ -586,11 +599,11 @@ class CodeEditor(QPlainTextEdit):
             return
 
         all_fmt = QTextCharFormat()
-        all_fmt.setBackground(QColor("#fff59d"))  # светло-жёлтый — все совпадения
+        all_fmt.setBackground(self._search_all_color)
 
         cur_fmt = QTextCharFormat()
-        cur_fmt.setBackground(QColor("#ff9800"))  # оранжевый — текущее
-        cur_fmt.setForeground(QColor("#000000"))
+        cur_fmt.setBackground(self._search_current_bg)
+        cur_fmt.setForeground(self._search_current_fg)
 
         cur_span = (current[0], current[1]) if current is not None else None
 
