@@ -897,6 +897,8 @@ class FindReplaceDialog(QDialog):
         editor.setTextCursor(cursor)
         editor.centerCursor()
         editor.setFocus()
+        editor.paragraph_clicked.emit(editor.editor_idx, start, True)
+        editor.paragraph_clicked.emit(editor.editor_idx, start, True)
 
     def _highlight_all_in_editors(
         self, pat, current_editor=None, current_span=None
@@ -1534,8 +1536,8 @@ class ParallelEditor(QMainWindow):
         # Инициализация проверки структуры
         self.structure_checker = StructureChecker()
         self.structure_thread = StructureCheckThread(self.structure_checker)
-        self.structure_thread.worker.finished.connect(self._on_structure_check_finished)
-        self.structure_thread.worker.started.connect(self._on_structure_check_started)
+        self.structure_thread.finished.connect(self._on_structure_check_finished)
+        self.structure_thread.started.connect(self._on_structure_check_started)
 
         # Debounce таймер — не запускать проверку чаще, чем раз в 1000мс
         self._structure_check_timer = QTimer()
@@ -1584,12 +1586,24 @@ class ParallelEditor(QMainWindow):
             cursor.setPosition(problem.en_pos)
             self.left_editor.setTextCursor(cursor)
             self.left_editor.centerCursor()
+            self.left_editor.paragraph_clicked.emit(
+                self.left_editor.editor_idx, problem.en_pos, True
+            )
+            self.left_editor.paragraph_clicked.emit(
+                self.left_editor.editor_idx, problem.en_pos, True
+            )
 
         if problem.ru_pos is not None:
             cursor = self.right_editor.textCursor()
             cursor.setPosition(problem.ru_pos)
             self.right_editor.setTextCursor(cursor)
             self.right_editor.centerCursor()
+            self.right_editor.paragraph_clicked.emit(
+                self.right_editor.editor_idx, problem.ru_pos, True
+            )
+            self.right_editor.paragraph_clicked.emit(
+                self.right_editor.editor_idx, problem.ru_pos, True
+            )
 
     def _schedule_structure_check(self) -> None:
         """Запланировать проверку структуры с debounce."""
@@ -2123,8 +2137,8 @@ class ParallelEditor(QMainWindow):
         editor.setTextCursor(cursor)
         editor.centerCursor()
         editor.setFocus()
-        self._sync_paragraph(editor.editor_idx, pos, True)
-        self._sync_paragraph(editor.editor_idx, pos, True)
+        editor.paragraph_clicked.emit(editor.editor_idx, pos, True)
+        editor.paragraph_clicked.emit(editor.editor_idx, pos, True)
 
     def _open_files(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(

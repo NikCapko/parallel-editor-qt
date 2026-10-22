@@ -9,9 +9,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterator
 
-from PySide6.QtCore import QObject, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 
 
 class ProblemType(Enum):
@@ -310,14 +309,17 @@ class StructureCheckWorker(QObject):
             self.finished.emit(problems)
 
 
-class StructureCheckThread(QThread):
-    """Поток для фоновой проверки структуры."""
+class StructureCheckThread(QObject):
+    """Менеджер потоков для фоновой проверки структуры."""
+
+    finished = Signal(list)  # list[StructureProblem]
+    started = Signal()
 
     def __init__(self, checker: StructureChecker, parent=None):
         super().__init__(parent)
-        self.worker = StructureCheckWorker(checker)
-        self.worker.moveToThread(self)
-        self.started.connect(self.worker.run)
+        self.checker = checker
+        self._thread: QThread | None = None
+        self._worker: StructureCheckWorker | None = None
 
     def check(
         self,
@@ -325,11 +327,48 @@ class StructureCheckThread(QThread):
         ru_text: str,
         filters: dict[ProblemType, bool] | None = None,
     ) -> None:
-        """Запустить проверку."""
-        self.worker.cancel()
-        self.worker.set_texts(en_text, ru_text, filters)
-        self.start()
+        """Запустить проверку в новом потоке."""
+        # Отменить предыдущий воркер
+        if self._worker:
+            self._worker.cancel()
+
+        # Дождаться завершения предыдущего потока
+        if self._thread is not None and self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(1000)
+            self._thread = None  # ← обнуляем после wait
+
+        # Создать новый воркер и поток
+        self._worker = StructureCheckWorker(self.checker)
+        self._worker.set_texts(en_text, ru_text, filters)
+
+        self._thread = QThread()
+        self._worker.moveToThread(self._thread)
+
+        # Подключить сигналы
+        self._thread.started.connect(self._worker.run)
+        self._worker.started.connect(self.started)
+        self._worker.finished.connect(self.finished)
+
+        # Очистка после завершения
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.finished.connect(self._cleanup_thread)  # ← обнулить ссылку
+
+        # Запустить
+        self._thread.start()
+
+    def _cleanup_thread(self) -> None:
+        """Обнулить ссылку на поток после завершения."""
+        self._thread = None
+        self._worker = None
 
     def cancel(self) -> None:
         """Отменить текущую проверку."""
-        self.worker.cancel()
+        if self._worker:
+            self._worker.cancel()
+        if self._thread is not None and self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(1000)
+            self._thread = None
