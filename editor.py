@@ -330,27 +330,62 @@ class HeadingOutline(QListWidget):
 
     def rebuild(self, text: str) -> None:
         """Пересобрать список заголовков из текста документа."""
-        self._updating = True
-        self.clear()
-        self._headings = []
+        # Собрать новые заголовки
+        new_headings: list[tuple[int, int, str]] = []
 
         def _iter_headings(text):
             for m in self._ATX_HEADING_RE.finditer(text):
                 yield m.start(), len(m.group(1)), m.group(2)
             for m in self._BOLD_HEADING_RE.finditer(text):
-                yield m.start(), 5, m.group(1)  # уровень для ** — на твой вкус
+                yield m.start(), 4, m.group(1)
 
         for pos, level, title in sorted(_iter_headings(text), key=lambda t: t[0]):
             title = title.strip()
-            # убрать простой markdown из заголовка
             title = re.sub(r"\*\*(.+?)\*\*", r"\1", title)
             title = re.sub(r"`([^`]+)`", r"\1", title)
-            self._headings.append((pos, level, title))
+            new_headings.append((pos, level, title))
+
+        # Сравнить с предыдущими заголовками
+        if new_headings == self._headings:
+            # Заголовки не изменились — не пересобирать
+            return
+
+        # Запомнить текущий выбранный элемент (по позиции в документе)
+        selected_pos = None
+        current_item = self.currentItem()
+        if current_item is not None:
+            selected_pos = current_item.data(Qt.ItemDataRole.UserRole)
+
+        # Пересобрать список
+        self._updating = True
+        self.clear()
+        self._headings = new_headings
+
+        for pos, level, title in self._headings:
             indent = "    " * (level - 2)
             item = QListWidgetItem(f"{indent}{title}")
             item.setData(Qt.ItemDataRole.UserRole, pos)
             item.setToolTip(title)
             self.addItem(item)
+
+        # Восстановить выбор
+        if selected_pos is not None:
+            # Найти заголовок с ближайшей позицией
+            best_idx = -1
+            best_diff = float("inf")
+            for i, (hpos, _level, _title) in enumerate(self._headings):
+                diff = abs(hpos - selected_pos)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_idx = i
+
+            if best_idx >= 0:
+                self.setCurrentRow(best_idx)
+                item = self.item(best_idx)
+                if item is not None:
+                    # Центрировать элемент
+                    self.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+
         self._updating = False
 
     def highlight_for_position(self, pos: int) -> None:
