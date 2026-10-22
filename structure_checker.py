@@ -16,6 +16,7 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 class ProblemType(Enum):
     """Тип проблемы структуры."""
+
     EMPTY_TRANSLATION = "empty_translation"  # 🟡 пустой перевод
     STRUCTURE_MISMATCH = "structure_mismatch"  # 🔴 рассинхрон
     LENGTH_DIVERGENCE = "length_divergence"  # ⚠️ разная длина
@@ -24,6 +25,7 @@ class ProblemType(Enum):
 @dataclass
 class Paragraph:
     """Абзац Markdown."""
+
     text: str
     start_pos: int
     end_pos: int
@@ -38,6 +40,7 @@ class Paragraph:
 @dataclass
 class StructureProblem:
     """Проблема структуры."""
+
     en_para_idx: int | None
     ru_para_idx: int | None
     problem_type: ProblemType
@@ -118,6 +121,19 @@ class MarkdownParagraphParser:
             if self._EMPTY_LINE_RE.match(line):
                 if current_para_lines:
                     flush_paragraph()
+                # Создаём пустой абзац для пустой строки
+                para = Paragraph(
+                    text="",
+                    start_pos=pos,
+                    end_pos=pos + line_len,
+                    line_start=line_idx,
+                    line_end=line_idx + 1,
+                    is_heading=False,
+                    is_list_item=False,
+                    is_code_block=False,
+                    is_empty=True,
+                )
+                paragraphs.append(para)
                 current_start_pos = pos + line_len
                 current_line_start = line_idx + 1
                 pos += line_len
@@ -158,11 +174,13 @@ class StructureChecker:
         en_paras = self.parser.parse(en_text)
         ru_paras = self.parser.parse(ru_text)
 
+        # Фильтруем пустые абзацы для статистики
         en_non_empty = [p for p in en_paras if not p.is_empty]
         ru_non_empty = [p for p in ru_paras if not p.is_empty]
 
         problems: list[StructureProblem] = []
 
+        # Проверяем количество непустых абзацев
         if len(en_non_empty) != len(ru_non_empty):
             problems.append(
                 StructureProblem(
@@ -175,11 +193,13 @@ class StructureChecker:
                 )
             )
 
-        max_len = max(len(en_non_empty), len(ru_non_empty))
+        # Сравниваем по индексу в полных списках (включая пустые)
+        max_len = max(len(en_paras), len(ru_paras))
         for idx in range(max_len):
-            en_para = en_non_empty[idx] if idx < len(en_non_empty) else None
-            ru_para = ru_non_empty[idx] if idx < len(ru_non_empty) else None
+            en_para = en_paras[idx] if idx < len(en_paras) else None
+            ru_para = ru_paras[idx] if idx < len(ru_paras) else None
 
+            # Пустой перевод при непустом оригинале
             if en_para and not en_para.is_empty:
                 if ru_para is None or ru_para.is_empty:
                     problems.append(
@@ -194,6 +214,7 @@ class StructureChecker:
                     )
                     continue
 
+            # Пустой оригинал при непустом переводе
             if ru_para and not ru_para.is_empty:
                 if en_para is None or en_para.is_empty:
                     problems.append(
@@ -208,6 +229,7 @@ class StructureChecker:
                     )
                     continue
 
+            # Оба непустые — проверяем длину
             if en_para and ru_para and not en_para.is_empty and not ru_para.is_empty:
                 en_len = len(en_para.text)
                 ru_len = len(ru_para.text)
