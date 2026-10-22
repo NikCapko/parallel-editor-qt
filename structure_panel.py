@@ -148,6 +148,10 @@ class StructurePanel(QWidget):
 
     def update_problems(self, problems: list[StructureProblem]) -> None:
         """Обновить список проблем."""
+
+        if problems == self._problems:
+            return
+
         self._problems = problems
         self.list_widget.clear()
 

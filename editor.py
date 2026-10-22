@@ -408,6 +408,7 @@ class CodeEditor(QPlainTextEdit):
         self.editor_idx = editor_idx
         self._syncing = False
         self._mouse_click = False
+        self._keyboard_nav = False
 
         # Цвета подсветки поиска (зависят от темы)
         self._search_all_color = QColor("#fff59d")
@@ -482,8 +483,9 @@ class CodeEditor(QPlainTextEdit):
         if not self._syncing:
             pos = self.textCursor().position()
             # mouse_click=True → ещё и выровнять скролл; иначе только подсветка пары
-            do_scroll = self._mouse_click
+            do_scroll = self._mouse_click or self._keyboard_nav
             self._mouse_click = False
+            self._keyboard_nav = False
             self.paragraph_clicked.emit(self.editor_idx, pos, do_scroll)
 
     def keyPressEvent(self, event):
@@ -491,6 +493,20 @@ class CodeEditor(QPlainTextEdit):
         key = event.key()
         ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+
+        # Клавиши навигации — требуют выравнивания
+        nav_keys = {
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+            Qt.Key.Key_PageUp,
+            Qt.Key.Key_PageDown,
+            Qt.Key.Key_Home,
+            Qt.Key.Key_End,
+        }
+        if key in nav_keys:
+            self._keyboard_nav = True
 
         if ctrl and not shift and key == Qt.Key.Key_B:
             self.format_line("bold")
