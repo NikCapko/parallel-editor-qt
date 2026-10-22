@@ -118,44 +118,22 @@ class StructurePanel(QWidget):
         self._save_filters()
         self.filters_changed.emit()
 
-    def _to_bool(self, value) -> bool:
-        """Безопасная конвертация значения из QSettings в bool."""
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.lower() in ("true", "1", "yes", "да")
-        if isinstance(value, int):
-            return bool(value)
-        return True  # значение по умолчанию
-
     def _load_filters(self) -> None:
         """Загрузить фильтры из настроек."""
         settings = QSettings()
         self.cb_empty.setChecked(
-            self._to_bool(settings.value("ui/structure_filter_empty", type=bool))
+            settings.value("ui/structure_filter_empty", True, type=bool)
         )
         self.cb_mismatch.setChecked(
-            self._to_bool(settings.value("ui/structure_filter_mismatch", type=bool))
+            settings.value("ui/structure_filter_mismatch", True, type=bool)
         )
         self.cb_length.setChecked(
-            self._to_bool(settings.value("ui/structure_filter_length", type=bool))
-        )
-        print(
-            "load filters"
-            + str(self.cb_empty.isChecked())
-            + str(self.cb_mismatch.isChecked())
-            + str(self.cb_length.isChecked())
+            settings.value("ui/structure_filter_length", True, type=bool)
         )
 
     def _save_filters(self) -> None:
         """Сохранить фильтры в настройки."""
         settings = QSettings()
-        print(
-            "save filters"
-            + str(self.cb_empty.isChecked())
-            + str(self.cb_mismatch.isChecked())
-            + str(self.cb_length.isChecked())
-        )
         settings.setValue("ui/structure_filter_empty", self.cb_empty.isChecked())
         settings.setValue("ui/structure_filter_mismatch", self.cb_mismatch.isChecked())
         settings.setValue("ui/structure_filter_length", self.cb_length.isChecked())
