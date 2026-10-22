@@ -337,7 +337,7 @@ class HeadingOutline(QListWidget):
             for m in self._ATX_HEADING_RE.finditer(text):
                 yield m.start(), len(m.group(1)), m.group(2)
             for m in self._BOLD_HEADING_RE.finditer(text):
-                yield m.start(), 4, m.group(1)  # уровень для ** — на твой вкус
+                yield m.start(), 5, m.group(1)  # уровень для ** — на твой вкус
 
         for pos, level, title in sorted(_iter_headings(text), key=lambda t: t[0]):
             title = title.strip()
@@ -1555,6 +1555,7 @@ class ParallelEditor(QMainWindow):
         self.structure_panel = StructurePanel()
         self.structure_panel.setMaximumHeight(150)
         self.structure_panel.problem_activated.connect(self._on_structure_problem)
+        self.structure_panel.filters_changed.connect(self._schedule_structure_check)
 
         # Индикатор загрузки
         self.structure_status = QLabel("✓ Структура проверена")
@@ -1598,7 +1599,8 @@ class ParallelEditor(QMainWindow):
         """Запустить проверку структуры в фоне."""
         en_text = self.left_editor.toPlainText()
         ru_text = self.right_editor.toPlainText()
-        self.structure_thread.check(en_text, ru_text)
+        filters = self.structure_panel.get_filters()
+        self.structure_thread.check(en_text, ru_text, filters)
 
     def _on_structure_check_started(self) -> None:
         """Показать индикатор загрузки."""

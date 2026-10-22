@@ -1,36 +1,84 @@
 # Добавить в editor.py после импортов
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtGui import (
     QColor,
 )
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QHBoxLayout,
     QListWidget,
     QListWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
 from structure_checker import ProblemType, StructureProblem
 
 
-class StructurePanel(QListWidget):
-    """Панель со списком проблем структуры."""
+class StructurePanel(QWidget):
+    """Панель со списком проблем структуры и фильтрами."""
 
     problem_activated = Signal(object)  # StructureProblem
+    filters_changed = Signal()  # Сигнал при изменении фильтров
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._problems: list[StructureProblem] = []
         self._theme = "light"
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        # Фильтры
+        filters_box = QHBoxLayout()
+        filters_box.setSpacing(8)
+
+        self.cb_empty = QCheckBox("🟡 Пустые")
+        self.cb_empty.setChecked(True)
+        self.cb_empty.setToolTip("Показывать пустые переводы/оригиналы")
+
+        filters_box.addWidget(self.cb_empty)
+
+        self.cb_mismatch = QCheckBox("🔴 Рассинхрон")
+        self.cb_mismatch.setChecked(True)
+        self.cb_mismatch.setToolTip("Показывать разное количество абзацев")
+
+        filters_box.addWidget(self.cb_mismatch)
+
+        self.cb_length = QCheckBox("⚠️ Длина")
+        self.cb_length.setChecked(True)
+        self.cb_length.setToolTip("Показывать расхождение по длине")
+
+        filters_box.addWidget(self.cb_length)
+
+        filters_box.addStretch()
+        layout.addLayout(filters_box)
+
+        # Список проблем
+        self.list_widget = QListWidget()
+        self.list_widget.setMaximumHeight(120)
+        self.list_widget.itemClicked.connect(self._on_item_clicked)
+        layout.addWidget(self.list_widget)
+
+        # Загрузить настройки
+        self._load_filters()
         self._apply_theme()
-        self.itemClicked.connect(self._on_item_clicked)
+
+        self.cb_empty.toggled.connect(self._on_filter_changed)
+        self.cb_mismatch.toggled.connect(self._on_filter_changed)
+        self.cb_length.toggled.connect(self._on_filter_changed)
 
     def set_theme(self, theme: str) -> None:
+        """Применить тему."""
         self._theme = theme
         self._apply_theme()
 
     def _apply_theme(self) -> None:
+        """Обновить стили для темы."""
         if self._theme == "dark":
-            self.setStyleSheet(
+            self.list_widget.setStyleSheet(
                 """
                 QListWidget {
                     background: #252526;
@@ -47,7 +95,7 @@ class StructurePanel(QListWidget):
                 """
             )
         else:
-            self.setStyleSheet(
+            self.list_widget.setStyleSheet(
                 """
                 QListWidget {
                     background: #fafafa;
@@ -65,15 +113,70 @@ class StructurePanel(QListWidget):
                 """
             )
 
+    def _on_filter_changed(self) -> None:
+        """Обработчик изменения фильтров."""
+        self._save_filters()
+        self.filters_changed.emit()
+
+    def _to_bool(self, value) -> bool:
+        """Безопасная конвертация значения из QSettings в bool."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in ("true", "1", "yes", "да")
+        if isinstance(value, int):
+            return bool(value)
+        return True  # значение по умолчанию
+
+    def _load_filters(self) -> None:
+        """Загрузить фильтры из настроек."""
+        settings = QSettings()
+        self.cb_empty.setChecked(
+            self._to_bool(settings.value("ui/structure_filter_empty", type=bool))
+        )
+        self.cb_mismatch.setChecked(
+            self._to_bool(settings.value("ui/structure_filter_mismatch", type=bool))
+        )
+        self.cb_length.setChecked(
+            self._to_bool(settings.value("ui/structure_filter_length", type=bool))
+        )
+        print(
+            "load filters"
+            + str(self.cb_empty.isChecked())
+            + str(self.cb_mismatch.isChecked())
+            + str(self.cb_length.isChecked())
+        )
+
+    def _save_filters(self) -> None:
+        """Сохранить фильтры в настройки."""
+        settings = QSettings()
+        print(
+            "save filters"
+            + str(self.cb_empty.isChecked())
+            + str(self.cb_mismatch.isChecked())
+            + str(self.cb_length.isChecked())
+        )
+        settings.setValue("ui/structure_filter_empty", self.cb_empty.isChecked())
+        settings.setValue("ui/structure_filter_mismatch", self.cb_mismatch.isChecked())
+        settings.setValue("ui/structure_filter_length", self.cb_length.isChecked())
+
+    def get_filters(self) -> dict[ProblemType, bool]:
+        """Получить текущие фильтры."""
+        return {
+            ProblemType.EMPTY_TRANSLATION: self.cb_empty.isChecked(),
+            ProblemType.STRUCTURE_MISMATCH: self.cb_mismatch.isChecked(),
+            ProblemType.LENGTH_DIVERGENCE: self.cb_length.isChecked(),
+        }
+
     def update_problems(self, problems: list[StructureProblem]) -> None:
         """Обновить список проблем."""
         self._problems = problems
-        self.clear()
+        self.list_widget.clear()
 
         if not problems:
             item = QListWidgetItem("✓ Структура совпадает")
             item.setForeground(QColor("#188038"))
-            self.addItem(item)
+            self.list_widget.addItem(item)
             return
 
         for p in problems:
@@ -94,7 +197,7 @@ class StructurePanel(QListWidget):
             else:
                 item.setForeground(QColor("#188038"))
 
-            self.addItem(item)
+            self.list_widget.addItem(item)
 
     def _on_item_clicked(self, item: QListWidgetItem) -> None:
         problem = item.data(Qt.ItemDataRole.UserRole)

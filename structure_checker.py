@@ -169,19 +169,36 @@ class StructureChecker:
     def __init__(self):
         self.parser = MarkdownParagraphParser()
 
-    def check(self, en_text: str, ru_text: str) -> list[StructureProblem]:
-        """Проверить структуру и вернуть список проблем."""
+    def check(
+        self,
+        en_text: str,
+        ru_text: str,
+        filters: dict[ProblemType, bool] | None = None,
+    ) -> list[StructureProblem]:
+        """Проверить структуру и вернуть список проблем.
+
+        filters — словарь {тип_проблемы: показывать_или_нет}
+        """
         en_paras = self.parser.parse(en_text)
         ru_paras = self.parser.parse(ru_text)
 
-        # Фильтруем пустые абзацы для статистики
         en_non_empty = [p for p in en_paras if not p.is_empty]
         ru_non_empty = [p for p in ru_paras if not p.is_empty]
+
+        # По умолчанию все фильтры включены
+        if filters is None:
+            filters = {
+                ProblemType.EMPTY_TRANSLATION: True,
+                ProblemType.STRUCTURE_MISMATCH: True,
+                ProblemType.LENGTH_DIVERGENCE: True,
+            }
 
         problems: list[StructureProblem] = []
 
         # Проверяем количество непустых абзацев
-        if len(en_non_empty) != len(ru_non_empty):
+        if len(en_non_empty) != len(ru_non_empty) and filters.get(
+            ProblemType.STRUCTURE_MISMATCH, True
+        ):
             problems.append(
                 StructureProblem(
                     en_para_idx=None,
@@ -193,7 +210,7 @@ class StructureChecker:
                 )
             )
 
-        # Сравниваем по индексу в полных списках (включая пустые)
+        # Сравниваем по индексу в полных списках
         max_len = max(len(en_paras), len(ru_paras))
         for idx in range(max_len):
             en_para = en_paras[idx] if idx < len(en_paras) else None
@@ -202,31 +219,33 @@ class StructureChecker:
             # Пустой перевод при непустом оригинале
             if en_para and not en_para.is_empty:
                 if ru_para is None or ru_para.is_empty:
-                    problems.append(
-                        StructureProblem(
-                            en_para_idx=idx,
-                            ru_para_idx=idx if ru_para else None,
-                            problem_type=ProblemType.EMPTY_TRANSLATION,
-                            message=f"Абзац {idx + 1}: пустой перевод",
-                            en_pos=en_para.start_pos,
-                            ru_pos=ru_para.start_pos if ru_para else None,
+                    if filters.get(ProblemType.EMPTY_TRANSLATION, True):
+                        problems.append(
+                            StructureProblem(
+                                en_para_idx=idx,
+                                ru_para_idx=idx if ru_para else None,
+                                problem_type=ProblemType.EMPTY_TRANSLATION,
+                                message=f"Абзац {idx + 1}: пустой перевод",
+                                en_pos=en_para.start_pos,
+                                ru_pos=ru_para.start_pos if ru_para else None,
+                            )
                         )
-                    )
                     continue
 
             # Пустой оригинал при непустом переводе
             if ru_para and not ru_para.is_empty:
                 if en_para is None or en_para.is_empty:
-                    problems.append(
-                        StructureProblem(
-                            en_para_idx=idx if en_para else None,
-                            ru_para_idx=idx,
-                            problem_type=ProblemType.EMPTY_TRANSLATION,
-                            message=f"Абзац {idx + 1}: пустой оригинал",
-                            en_pos=en_para.start_pos if en_para else None,
-                            ru_pos=ru_para.start_pos,
+                    if filters.get(ProblemType.EMPTY_TRANSLATION, True):
+                        problems.append(
+                            StructureProblem(
+                                en_para_idx=idx if en_para else None,
+                                ru_para_idx=idx,
+                                problem_type=ProblemType.EMPTY_TRANSLATION,
+                                message=f"Абзац {idx + 1}: пустой оригинал",
+                                en_pos=en_para.start_pos if en_para else None,
+                                ru_pos=ru_para.start_pos,
+                            )
                         )
-                    )
                     continue
 
             # Оба непустые — проверяем длину
@@ -236,16 +255,17 @@ class StructureChecker:
                 if en_len > 0 and ru_len > 0:
                     ratio = abs(en_len - ru_len) / max(en_len, ru_len)
                     if ratio > self.LENGTH_THRESHOLD:
-                        problems.append(
-                            StructureProblem(
-                                en_para_idx=idx,
-                                ru_para_idx=idx,
-                                problem_type=ProblemType.LENGTH_DIVERGENCE,
-                                message=f"Абзац {idx + 1}: разная длина (оригинал {en_len}, перевод {ru_len}, расхождение {ratio:.0%})",
-                                en_pos=en_para.start_pos,
-                                ru_pos=ru_para.start_pos,
+                        if filters.get(ProblemType.LENGTH_DIVERGENCE, True):
+                            problems.append(
+                                StructureProblem(
+                                    en_para_idx=idx,
+                                    ru_para_idx=idx,
+                                    problem_type=ProblemType.LENGTH_DIVERGENCE,
+                                    message=f"Абзац {idx + 1}: разная длина (оригинал {en_len}, перевод {ru_len}, расхождение {ratio:.0%})",
+                                    en_pos=en_para.start_pos,
+                                    ru_pos=ru_para.start_pos,
+                                )
                             )
-                        )
 
         return problems
 
@@ -261,12 +281,19 @@ class StructureCheckWorker(QObject):
         self.checker = checker
         self._en_text = ""
         self._ru_text = ""
+        self._filters = None
         self._cancelled = False
 
-    def set_texts(self, en_text: str, ru_text: str) -> None:
-        """Установить тексты для проверки."""
+    def set_texts(
+        self,
+        en_text: str,
+        ru_text: str,
+        filters: dict[ProblemType, bool] | None = None,
+    ) -> None:
+        """Установить тексты и фильтры для проверки."""
         self._en_text = en_text
         self._ru_text = ru_text
+        self._filters = filters
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -278,7 +305,7 @@ class StructureCheckWorker(QObject):
         self.started.emit()
         if self._cancelled:
             return
-        problems = self.checker.check(self._en_text, self._ru_text)
+        problems = self.checker.check(self._en_text, self._ru_text, self._filters)
         if not self._cancelled:
             self.finished.emit(problems)
 
@@ -292,10 +319,15 @@ class StructureCheckThread(QThread):
         self.worker.moveToThread(self)
         self.started.connect(self.worker.run)
 
-    def check(self, en_text: str, ru_text: str) -> None:
+    def check(
+        self,
+        en_text: str,
+        ru_text: str,
+        filters: dict[ProblemType, bool] | None = None,
+    ) -> None:
         """Запустить проверку."""
         self.worker.cancel()
-        self.worker.set_texts(en_text, ru_text)
+        self.worker.set_texts(en_text, ru_text, filters)
         self.start()
 
     def cancel(self) -> None:
