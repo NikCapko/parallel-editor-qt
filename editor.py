@@ -384,7 +384,9 @@ class HeadingOutline(QListWidget):
                 item = self.item(best_idx)
                 if item is not None:
                     # Центрировать элемент
-                    self.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                    self.scrollToItem(
+                        item, QAbstractItemView.ScrollHint.PositionAtCenter
+                    )
 
         self._updating = False
 
@@ -1886,10 +1888,14 @@ class ParallelEditor(QMainWindow):
         self.left_editor._syncing = True
         self.right_editor._syncing = True
         try:
+            # Сохранить позиции курсора
             en_pos = self.left_editor.textCursor().position()
             ru_pos = self.right_editor.textCursor().position()
+
             self.left_editor.setPlainText(new_en)
             self.right_editor.setPlainText(new_ru)
+
+            # Восстановить курсоры
             for editor, pos, txt in (
                 (self.left_editor, en_pos, new_en),
                 (self.right_editor, ru_pos, new_ru),
@@ -1897,6 +1903,10 @@ class ParallelEditor(QMainWindow):
                 c = editor.textCursor()
                 c.setPosition(min(pos, max(0, len(txt) - 1)))
                 editor.setTextCursor(c)
+
+            # Отложенное центрирование курсора после завершения layout
+            QTimer.singleShot(0, lambda: self.left_editor.centerCursor())
+            QTimer.singleShot(0, lambda: self.right_editor.centerCursor())
         finally:
             self.left_editor._syncing = False
             self.right_editor._syncing = False
