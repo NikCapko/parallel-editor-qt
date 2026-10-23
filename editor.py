@@ -1104,28 +1104,60 @@ class FindReplaceDialog(QDialog):
             return
         repl = self.replace_edit.currentText()
         total = 0
+
         for editor in self._editors():
             text = editor.toPlainText()
+
+            # Найти все совпадения
+            matches = list(pat.finditer(text))
+            if not matches:
+                continue
+
             try:
-                new_text, n = pat.subn(repl, text)
+                # Проверяем regex-замену на первом совпадении, чтобы поймать ошибку заранее
+                if self.regex_cb.isChecked():
+                    pat.sub(repl, matches[0].group(), count=1)
             except re.error as e:
                 self.status.setText(f"Ошибка замены: {e}")
                 self.status.setStyleSheet("color: #c5221f;")
                 return
-            if n:
-                pos = editor.textCursor().position()
-                editor._syncing = True
-                editor.setPlainText(new_text)
-                c = editor.textCursor()
-                c.setPosition(min(pos, len(new_text)))
-                editor.setTextCursor(c)
-                editor._syncing = False
-                total += n
+
+            # Сохранить позицию курсора
+            cursor_pos = editor.textCursor().position()
+
+            # Все замены — одна операция для undo
+            cursor = editor.textCursor()
+            cursor.beginEditBlock()
+
+            # Заменяем в ОБРАТНОМ порядке, чтобы позиции предыдущих совпадений не сдвигались
+            for m in reversed(matches):
+                cursor.setPosition(m.start())
+                cursor.setPosition(m.end(), QTextCursor.MoveMode.KeepAnchor)
+                try:
+                    if self.regex_cb.isChecked():
+                        new_text = pat.sub(repl, m.group(), count=1)
+                    else:
+                        new_text = repl
+                    cursor.insertText(new_text)
+                except re.error:
+                    # Не должно произойти, но на всякий случай
+                    continue
+
+            cursor.endEditBlock()
+
+            # Восстановить позицию курсора
+            new_text_len = len(editor.toPlainText())
+            cursor = editor.textCursor()
+            cursor.setPosition(min(cursor_pos, max(0, new_text_len)))
+            editor.setTextCursor(cursor)
+
+            total += len(matches)
+
         if total:
             self._remember(self.find_edit, self._combo_text(self.find_edit))
-            self.status.setText(f"Заменено: {total}")
+            self.status.setText(f"Заменено: {total} (Ctrl+Z для отмены)")
             self.status.setStyleSheet("color: #188038;")
-            # обновить подсветку оставшихся вхождений
+            # Обновить подсветку
             pat2 = self._pattern()
             if pat2 is not None:
                 self._highlight_all_in_editors(pat2)
@@ -1677,6 +1709,7 @@ class ParallelEditor(QMainWindow):
             return 0
         # Разделяем по пробелам и фильтрам пустые строки
         import re
+
         words = re.findall(r"\b\w+\b", text)
         return len(words)
 
