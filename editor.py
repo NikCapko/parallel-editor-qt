@@ -1603,6 +1603,27 @@ class ParallelEditor(QMainWindow):
         self.setStatusBar(QStatusBar())
         self._create_menu()
 
+        # --- Статистика в статус-баре ---
+        self._stats_timer = QTimer()
+        self._stats_timer.setSingleShot(True)
+        self._stats_timer.setInterval(300)
+        self._stats_timer.timeout.connect(self._update_stats)
+
+        self.stats_label = QLabel("")
+        self.stats_label.setStyleSheet("padding: 0 8px;")
+        self.statusBar().addPermanentWidget(self.stats_label)
+
+        self.cursor_label = QLabel("")
+        self.cursor_label.setStyleSheet("padding: 0 8px;")
+        self.statusBar().addPermanentWidget(self.cursor_label)
+
+        # Подключить к изменению текста и курсора
+        self.left_editor.textChanged.connect(self._schedule_stats_update)
+        self.right_editor.textChanged.connect(self._schedule_stats_update)
+        self.left_editor.cursorPositionChanged.connect(self._schedule_stats_update)
+        self.right_editor.cursorPositionChanged.connect(self._update_cursor_position)
+        self.right_editor.cursorPositionChanged.connect(self._update_cursor_position)
+
         # Инициализация проверки структуры
         self.structure_checker = StructureChecker()
         self.structure_thread = StructureCheckThread(self.structure_checker)
@@ -1648,6 +1669,80 @@ class ParallelEditor(QMainWindow):
         self.apply_theme(saved_theme)
 
         self.statusBar().showMessage("Клик по строке — подсветка пары и выравнивание")
+
+    @staticmethod
+    def _count_words(text: str) -> int:
+        """Подсчитать количество слов в тексте."""
+        if not text.strip():
+            return 0
+        # Разделяем по пробелам и фильтрам пустые строки
+        import re
+        words = re.findall(r"\b\w+\b", text)
+        return len(words)
+
+    def _schedule_stats_update(self) -> None:
+        """Запланировать обновление статистики с debounce."""
+        self._stats_timer.start()
+
+    def _update_stats(self) -> None:
+        """Обновить статистику в статус-баре."""
+        en_text = self.left_editor.toPlainText()
+        ru_text = self.right_editor.toPlainText()
+
+        en_words = self._count_words(en_text)
+        ru_words = self._count_words(ru_text)
+        en_chars = len(en_text)
+        ru_chars = len(ru_text)
+
+        # Подсчёт абзацев через парсер (если доступен)
+        en_paras = 0
+        ru_paras = 0
+        ru_non_empty = 0
+        completion = 0
+
+        if hasattr(self, "structure_checker"):
+            en_paras_list = self.structure_checker.parser.parse(en_text)
+            ru_paras_list = self.structure_checker.parser.parse(ru_text)
+            en_paras = sum(1 for p in en_paras_list if not p.is_empty)
+            ru_paras = sum(1 for p in ru_paras_list if not p.is_empty)
+            ru_non_empty = ru_paras
+            if en_paras > 0:
+                completion = int(ru_non_empty / en_paras * 100)
+                completion = min(completion, 100)
+        else:
+            # Fallback: считаем непустые строки
+            en_paras = sum(1 for line in en_text.split("\n") if line.strip())
+            ru_paras = sum(1 for line in ru_text.split("\n") if line.strip())
+            if en_paras > 0:
+                completion = int(ru_paras / en_paras * 100)
+                completion = min(completion, 100)
+
+        # Форматирование
+        stats = (
+            f"Оригинал: {en_words:,} слов · {en_chars:,} зн. · {en_paras} абз.  |  "
+            f"Перевод: {ru_words:,} слов · {ru_chars:,} зн. · {ru_paras} абз.  |  "
+            f"Готово: {completion}%"
+        )
+        self.stats_label.setText(stats)
+
+        # Обновить позицию курсора
+        self._update_cursor_position()
+
+    def _update_cursor_position(self) -> None:
+        """Обновить позицию курсора в статус-баре."""
+        # Берём позицию из активного редактора
+        w = self.focusWidget()
+        if w is self.right_editor:
+            editor = self.right_editor
+            side = "Перевод"
+        else:
+            editor = self.left_editor
+            side = "Оригинал"
+
+        cursor = editor.textCursor()
+        line = cursor.blockNumber() + 1
+        col = cursor.columnNumber() + 1
+        self.cursor_label.setText(f"{side}: стр. {line}, стлб. {col}")
 
     def _on_structure_problem(self, problem: StructureProblem) -> None:
         """Перейти к проблемному абзацу."""
@@ -2368,6 +2463,7 @@ class ParallelEditor(QMainWindow):
         self._update_active_heading(self.right_editor, self.right_outline)
         self._update_title()
         self.statusBar().showMessage("Файлы загружены", 2000)
+        self._update_stats()
 
     def _save_files(self) -> None:
         if not self.current_file_base and not self._en_path:
