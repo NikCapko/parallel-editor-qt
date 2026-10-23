@@ -2070,14 +2070,14 @@ class ParallelEditor(QMainWindow):
 
     def _correct_all_text(self) -> None:
         """Применить нормализацию ко всему тексту обеих панелей."""
-        reply = QMessageBox.question(
-            self,
-            "Исправить текст",
-            "Применить правила корректировки ко всему тексту\nоригинала и перевода?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
+        #reply = QMessageBox.question(
+        #    self,
+        #    "Исправить текст",
+        #    "Применить правила корректировки ко всему тексту\nоригинала и перевода?",
+        #    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        #)
+        #if reply != QMessageBox.StandardButton.Yes:
+        #    return
 
         en_path = self._en_path or (
             Path(str(self.current_file_base) + ".en.md")
