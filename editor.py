@@ -2126,7 +2126,7 @@ class ParallelEditor(QMainWindow):
         if isinstance(w, CodeEditor) and w.textCursor().hasSelection():
             sel = w.textCursor().selectedText().replace(chr(0x2029), chr(10))
             if sel and chr(10) not in sel:
-                dlg.find_edit.setText(sel)
+                dlg.find_edit.setEditText(sel)
 
         dlg.set_replace_mode(replace_mode)
         dlg.find_edit.setFocus()
