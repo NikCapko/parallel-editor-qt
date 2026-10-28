@@ -73,7 +73,12 @@ from PySide6.QtWidgets import (
 
 from collapsible_widget import CollapsibleWidget
 from export_parallel import export_file
-from structure_checker import StructureChecker, StructureCheckThread, StructureProblem
+from structure_checker import (
+    ProblemType,
+    StructureChecker,
+    StructureCheckThread,
+    StructureProblem,
+)
 from structure_panel import StructurePanel
 from text_corrector import normalize_text
 
@@ -523,6 +528,7 @@ class CodeEditor(QPlainTextEdit):
             do_scroll = self._mouse_click or self._keyboard_nav
             self._mouse_click = False
             self._keyboard_nav = False
+            self.paragraph_clicked.emit(self.editor_idx, pos, do_scroll)
             self.paragraph_clicked.emit(self.editor_idx, pos, do_scroll)
 
     def keyPressEvent(self, event):
@@ -1820,13 +1826,28 @@ class ParallelEditor(QMainWindow):
         self.structure_status.setStyleSheet("color: #1a73e8; padding: 4px;")
 
     def _on_structure_check_finished(self, problems: list) -> None:
+        """Обновить панель результатов."""
         self.structure_panel.update_problems(problems)
-        if problems:
-            self.structure_collapsible.set_status(
-                f"⚠️ {len(problems)} проблем", "#f9ab00"
+
+        if not problems:
+            # 🟢 Нет замечаний
+            self.structure_collapsible.set_status("🟢 OK", "#188038")
+            return
+
+        has_critical = any(
+            p.problem_type in (
+                ProblemType.EMPTY_TRANSLATION,
+                ProblemType.STRUCTURE_MISMATCH,
             )
+            for p in problems
+        )
+
+        if has_critical:
+            # 🔴 Пустые переводы или рассинхрон
+            self.structure_collapsible.set_status(f"🔴 {len(problems)} проблем", "#c5221f")
         else:
-            self.structure_collapsible.set_status("✓ OK", "#188038")
+            # 🟡 Только расхождения по длине
+            self.structure_collapsible.set_status(f"🟡 {len(problems)} проблем", "#f9ab00")
 
     def apply_theme(self, theme: str) -> None:
         """Применяет светлую или тёмную тему ко всему приложению."""
@@ -2070,13 +2091,13 @@ class ParallelEditor(QMainWindow):
 
     def _correct_all_text(self) -> None:
         """Применить нормализацию ко всему тексту обеих панелей."""
-        #reply = QMessageBox.question(
+        # reply = QMessageBox.question(
         #    self,
         #    "Исправить текст",
         #    "Применить правила корректировки ко всему тексту\nоригинала и перевода?",
         #    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        #)
-        #if reply != QMessageBox.StandardButton.Yes:
+        # )
+        # if reply != QMessageBox.StandardButton.Yes:
         #    return
 
         en_path = self._en_path or (
