@@ -1407,7 +1407,7 @@ class MetadataDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Метаданные книги (.bnf)")
         self.setMinimumWidth(1100)
-        self.setMinimumHeight(800)
+        self.setMinimumHeight(820)
 
         data = {**DEFAULT_BNF, **(data or {})}
         tags_raw = data.get("tags") or []
@@ -1600,7 +1600,7 @@ class ParallelEditor(QMainWindow):
         self.left_collapsible.add_widget(self.left_outline)
         # Фиксируем ширину контейнера — как у самого Outline
         self.left_collapsible.setMinimumWidth(0)
-        self.left_collapsible.setMaximumWidth(200)
+        self.left_collapsible.setMaximumWidth(202)
 
         self.left_editor = CodeEditor(0)
         self.right_editor = CodeEditor(1)
@@ -1612,7 +1612,7 @@ class ParallelEditor(QMainWindow):
         )
         self.right_collapsible.add_widget(self.right_outline)
         self.right_collapsible.setMinimumWidth(0)
-        self.right_collapsible.setMaximumWidth(200)
+        self.right_collapsible.setMaximumWidth(202)
 
         editors_row.addWidget(self.left_collapsible, 0)
         editors_row.addWidget(self.left_editor, 1)
@@ -1892,12 +1892,29 @@ class ParallelEditor(QMainWindow):
                     QMenu { background-color: #353535; color: #ffffff; border: 1px solid #555555; }
                     QMenu::item:selected { background-color: #2a82da; }
                     QStatusBar { background-color: #252526; color: #cccccc; }
+                    QScrollBar:vertical { background: #1e1e1e; width: 10px; margin: 0 }
+                    QScrollBar::handle:vertical { background: #3c3c3c; min-height: 20px; border-radius: 5px; }
+                    QScrollBar::handle:vertical:hover { background: #505050; }
+                    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+                    QScrollBar:horizontal { background: #1e1e1e; height: 10px; margin: 0 }
+                    QScrollBar::handle:horizontal { background: #3c3c3c; min-width: 20px; border-radius: 5px; }
+                    QScrollBar::handle:horizontal:hover { background: #505050;}
+                    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
                     """
             )
         else:
             app.setStyle("Fusion")
             app.setPalette(app.style().standardPalette())
-            app.setStyleSheet("")
+            app.setStyleSheet("""
+                    QScrollBar:vertical { background: #f5f5f5; width: 10px; margin: 0 }
+                    QScrollBar::handle:vertical { background: #c8c8c8; min-height: 20px; border-radius: 5px; }
+                    QScrollBar::handle:vertical:hover { background: #b0b0b0; }
+                    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+                    QScrollBar:horizontal { background: #f5f5f5; height: 10px; margin: 0 }
+                    QScrollBar::handle:horizontal { background: #c8c8c8; min-width: 20px; border-radius: 5px; }
+                    QScrollBar::handle:horizontal:hover { background: #b0b0b0; }
+                    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+                """)
 
         # Обновляем кастомные виджеты
         self.left_collapsible.set_theme(theme)
