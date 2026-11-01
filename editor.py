@@ -451,6 +451,7 @@ class CodeEditor(QPlainTextEdit):
         self._syncing = False
         self._mouse_click = False
         self._keyboard_nav = False
+        self._is_typing = False
 
         # Цвета подсветки поиска (зависят от темы)
         self._search_all_color = QColor("#fff59d")
@@ -513,21 +514,27 @@ class CodeEditor(QPlainTextEdit):
     def _on_cursor_changed(self):
         cursor = self.textCursor()
         current_block = cursor.block()
-        if self.highlighter.prev_block_number >= 0:
-            prev_block = self.document().findBlockByNumber(
-                self.highlighter.prev_block_number
-            )
-            if prev_block.isValid():
-                self.highlighter.rehighlightBlock(prev_block)
-        self.highlighter.rehighlightBlock(current_block)
-        self.highlighter.prev_block_number = current_block.blockNumber()
+        current_block_num = current_block.blockNumber()
+
+        # Перерисовывать только при смене блока (а не при каждом движении курсора)
+        if self.highlighter.prev_block_number != current_block_num:
+            if self.highlighter.prev_block_number >= 0:
+                prev_block = self.document().findBlockByNumber(
+                    self.highlighter.prev_block_number
+                )
+                if prev_block.isValid():
+                    self.highlighter.rehighlightBlock(prev_block)
+            self.highlighter.rehighlightBlock(current_block)
+            self.highlighter.prev_block_number = current_block_num
 
         if not self._syncing:
             pos = self.textCursor().position()
-            # mouse_click=True → ещё и выровнять скролл; иначе только подсветка пары
-            do_scroll = self._mouse_click or self._keyboard_nav
+            do_scroll = (
+                self._mouse_click or self._keyboard_nav
+            ) and not self._is_typing
             self._mouse_click = False
             self._keyboard_nav = False
+            self._is_typing = False
             self.paragraph_clicked.emit(self.editor_idx, pos, do_scroll)
             self.paragraph_clicked.emit(self.editor_idx, pos, do_scroll)
 
@@ -537,7 +544,6 @@ class CodeEditor(QPlainTextEdit):
         ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
 
-        # Клавиши навигации — требуют выравнивания
         nav_keys = {
             Qt.Key.Key_Up,
             Qt.Key.Key_Down,
@@ -548,9 +554,32 @@ class CodeEditor(QPlainTextEdit):
             Qt.Key.Key_Home,
             Qt.Key.Key_End,
         }
+
+        # Определяем тип действия для флагов
         if key in nav_keys:
             self._keyboard_nav = True
+            self._is_typing = False
+        elif ctrl:
+            # Ctrl-комбинации (форматирование) — не набор текста
+            self._is_typing = False
+            self._keyboard_nav = False
+        elif key in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+            Qt.Key.Key_Backspace,
+            Qt.Key.Key_Delete,
+        ):
+            self._is_typing = False
+            self._keyboard_nav = False
+        elif len(event.text()) > 0 and not event.text().isspace():
+            # Обычный ввод символа
+            self._is_typing = True
+            self._keyboard_nav = False
+        else:
+            self._is_typing = False
+            self._keyboard_nav = False
 
+        # --- Горячие клавиши форматирования ---
         if ctrl and not shift and key == Qt.Key.Key_B:
             self.format_line("bold")
             return
@@ -1573,6 +1602,17 @@ class ParallelEditor(QMainWindow):
         self._ru_modified = False
         self.current_file_base = None
 
+        # Debounce для оглавлений
+        self._outline_timer_en = QTimer()
+        self._outline_timer_en.setSingleShot(True)
+        self._outline_timer_en.setInterval(1000)
+        self._outline_timer_en.timeout.connect(self._rebuild_left_outline)
+
+        self._outline_timer_ru = QTimer()
+        self._outline_timer_ru.setSingleShot(True)
+        self._outline_timer_ru.setInterval(1000)
+        self._outline_timer_ru.timeout.connect(self._rebuild_right_outline)
+
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
@@ -1644,7 +1684,7 @@ class ParallelEditor(QMainWindow):
         # --- Статистика в статус-баре ---
         self._stats_timer = QTimer()
         self._stats_timer.setSingleShot(True)
-        self._stats_timer.setInterval(300)
+        self._stats_timer.setInterval(1000)
         self._stats_timer.timeout.connect(self._update_stats)
 
         self.stats_label = QLabel("")
@@ -1835,7 +1875,8 @@ class ParallelEditor(QMainWindow):
             return
 
         has_critical = any(
-            p.problem_type in (
+            p.problem_type
+            in (
                 ProblemType.EMPTY_TRANSLATION,
                 ProblemType.STRUCTURE_MISMATCH,
             )
@@ -1844,10 +1885,14 @@ class ParallelEditor(QMainWindow):
 
         if has_critical:
             # 🔴 Пустые переводы или рассинхрон
-            self.structure_collapsible.set_status(f"🔴 {len(problems)} проблем", "#c5221f")
+            self.structure_collapsible.set_status(
+                f"🔴 {len(problems)} проблем", "#c5221f"
+            )
         else:
             # 🟡 Только расхождения по длине
-            self.structure_collapsible.set_status(f"🟡 {len(problems)} проблем", "#f9ab00")
+            self.structure_collapsible.set_status(
+                f"🟡 {len(problems)} проблем", "#f9ab00"
+            )
 
     def apply_theme(self, theme: str) -> None:
         """Применяет светлую или тёмную тему ко всему приложению."""
@@ -2438,16 +2483,15 @@ class ParallelEditor(QMainWindow):
             self._en_modified = True
             name = self._en_path.name if self._en_path else "Оригинал (.en.md)"
             self.lbl_en.setText(f"Оригинал — {name} *")
-            self.left_outline.rebuild(self.left_editor.toPlainText())
-            self._update_active_heading(self.left_editor, self.left_outline)
+            # Отложить rebuild оглавления
+            self._schedule_outline_rebuild("en")
         else:
             if self.right_editor._syncing:
                 return
             self._ru_modified = True
             name = self._ru_path.name if self._ru_path else "Перевод (.ru.md)"
             self.lbl_ru.setText(f"Перевод — {name} *")
-            self.right_outline.rebuild(self.right_editor.toPlainText())
-            self._update_active_heading(self.right_editor, self.right_outline)
+            self._schedule_outline_rebuild("ru")
         self._update_title()
 
     def _update_active_heading(
@@ -2682,6 +2726,34 @@ class ParallelEditor(QMainWindow):
                 event.ignore()
         else:
             event.accept()
+
+    def _schedule_outline_rebuild(self, side: str) -> None:
+        """Запланировать пересборку оглавления с debounce."""
+        if side == "en":
+            self._outline_timer_en.start()
+        else:
+            self._outline_timer_ru.start()
+
+    def _rebuild_left_outline(self) -> None:
+        text = self.left_editor.toPlainText()
+        self.left_outline.rebuild(text)
+        self._update_active_heading(self.left_editor, self.left_outline)
+        self._update_outline_status(self.left_collapsible, text)
+
+    def _rebuild_right_outline(self) -> None:
+        text = self.right_editor.toPlainText()
+        self.right_outline.rebuild(text)
+        self._update_active_heading(self.right_editor, self.right_outline)
+        self._update_outline_status(self.right_collapsible, text)
+
+    def _update_outline_status(self, collapsible: CollapsibleWidget, text: str) -> None:
+        """Показать количество заголовков в статусе сворачиваемой панели."""
+        count = len(list(HeadingOutline._ATX_HEADING_RE.finditer(text)))
+        count += len(list(HeadingOutline._BOLD_HEADING_RE.finditer(text)))
+        if count == 0:
+            collapsible.set_status("нет заголовков", "#888888")
+        else:
+            collapsible.set_status(f"▼ {count}", "#1a73e8")
 
 
 def main():
